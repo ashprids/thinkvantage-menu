@@ -10,11 +10,12 @@ This section highlights the package requirements needed to run all the functions
 
 Standard system utilities provided by a normal Linux Mint installation (`bash`, `systemd`, `coreutils`, `grep`, `sed`, `awk`, `procps`, `util-linux`, etc.) are assumed to already be present.
 
-<details>
-<summary>APT packages</summary>
+### APT packages
+
 ```bash
 sudo apt install rofi libnotify-bin gnome-terminal xdotool x11-utils brightnessctl copyq xclip hardinfo baobab gnome-disk-utility gnome-logs lm-sensors network-manager network-manager-gnome wavemon blueman gufw iw iputils-ping dnsutils iproute2 pavucontrol fsearch pulseaudio-utils wireshark timeshift qalculate-gtk gpick gucharmap flatpak
 ```
+
 - `rofi` — menu interface
 - `libnotify-bin` — desktop notifications (`notify-send`)
 - `gnome-terminal` — terminal windows used by menu utilities
@@ -45,24 +46,24 @@ sudo apt install rofi libnotify-bin gnome-terminal xdotool x11-utils brightnessc
 - `gpick` — colour picker
 - `gucharmap` — character map
 - `flatpak` — required for applications installed through Flatpak
-</details>
 
-<details>
-<summary>Flatpak packages</summary>
+### Flatpak packages
+
 ```bash
 flatpak install flathub io.missioncenter.MissionCenter io.github.thetumultuousunicornofdarkness.cpu-x com.github.wwmm.easyeffects org.localsend.localsend_app com.github.tchx84.Flatseal
 ```
+
 - `io.missioncenter.MissionCenter` - Windows-style task manager
 - `io.github.thetumultuousunicornofdarkness.cpu-x` - CPU-Z equivalent for Linux
 - `com.github.wwmm.easyeffects` - audio effects for Pipewire applications
 - `org.localsend.localsend_app` - share files to local devices
 - `com.github.tchx84.Flatseal` - manage Flatpak package permissions
 - `io.github.cboxdoerfer.FSearch` - advanced file and directory searching
-</details>
 
-<details>
-<summary>Mint/Cinnamon-specific packages</summary>
+### Mint-specific packages
+
 These packages usually come included with Linux Mint. If you're setting this up on a different distribution, you should substitute these in the script for your system equivalents.
+
 - `cinnamon` — Cinnamon itself and `cinnamon-settings`
 - `cinnamon-screensaver` — screen locking
 - `cinnamon-session` — logout/session controls
@@ -70,7 +71,6 @@ These packages usually come included with Linux Mint. If you're setting this up 
 - `xed` — text editor
 - `mintupdate` — Update Manager
 - `warpinator` — local file sharing
-</details>
 
 ## Setup
 
