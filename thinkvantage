@@ -1,0 +1,1578 @@
+#!/usr/bin/env bash
+
+# ============================================================
+# ThinkVantage menu
+# by fridge | last update: 03/09/2026
+#
+# Copyright (C) 2026 Ashton Prideaux
+# This program comes with ABSOLUTELY NO WARRANTY; for details see LICENSE.
+# This is free software, and you are welcome to redistribute it under 
+# certain conditions; see LICENSE for details.
+# ============================================================
+
+SCREENSHOT_DIR="$HOME/Pictures/Screenshots"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/thinkvantage"
+TERM_APP="gnome-terminal"
+
+mkdir -p "$SCREENSHOT_DIR" "$CACHE_DIR"
+
+# Save the window focused before rofi appears.
+# This is used for Active Window screenshots.
+ORIGINAL_WINDOW="$(xdotool getactivewindow 2>/dev/null || true)"
+
+# Prefer the X230's Intel backlight device.
+if [[ -e /sys/class/backlight/intel_backlight ]]; then
+    BACKLIGHT_DEVICE="intel_backlight"
+else
+    BACKLIGHT_DEVICE="$(
+        ls /sys/class/backlight 2>/dev/null |
+        head -n1
+    )"
+fi
+
+
+# ============================================================
+# helpers
+# ============================================================
+
+menu() {
+    local prompt="$1"
+    shift
+
+    printf '%s\n' "$@" |
+        rofi -dmenu -i -p "$prompt"
+}
+
+
+missing() {
+    notify-send \
+        "ThinkVantage" \
+        "Command not found: $1"
+}
+
+
+run_bg() {
+    local command="$1"
+
+    if ! command -v "$command" >/dev/null 2>&1; then
+        missing "$command"
+        exit 1
+    fi
+
+    nohup "$@" >/dev/null 2>&1 &
+    disown
+
+    # Launching anything closes ThinkVantage completely.
+    exit 0
+}
+
+
+run_flatpak() {
+    local appid="$1"
+
+    if ! command -v flatpak >/dev/null 2>&1 ||
+       ! flatpak info "$appid" >/dev/null 2>&1
+    then
+        notify-send \
+            "ThinkVantage" \
+            "Flatpak not installed: $appid"
+
+        exit 1
+    fi
+
+    nohup flatpak run "$appid" \
+        >/dev/null 2>&1 &
+
+    disown
+    exit 0
+}
+
+
+terminal_run() {
+    local geometry="$1"
+    local title="$2"
+    local command="$3"
+
+    if ! command -v "$TERM_APP" >/dev/null 2>&1; then
+        missing "$TERM_APP"
+        exit 1
+    fi
+
+    nohup "$TERM_APP" \
+        --geometry="$geometry" \
+        --title="$title" \
+        -- bash -lc "$command; exec bash" \
+        >/dev/null 2>&1 &
+
+    disown
+    exit 0
+}
+
+
+confirm() {
+    printf 'No\nYes\n' |
+        rofi -dmenu -i -p "$1" |
+        grep -qx "Yes"
+}
+
+
+# ============================================================
+# flameshot
+#
+# Supports both:
+#   apt/native Flameshot
+#   Flatpak Flameshot
+# ============================================================
+
+flameshot_run() {
+    if command -v flameshot >/dev/null 2>&1; then
+        command flameshot "$@"
+        return $?
+    fi
+
+    if command -v flatpak >/dev/null 2>&1 &&
+       flatpak info org.flameshot.Flameshot >/dev/null 2>&1
+    then
+        flatpak run \
+            org.flameshot.Flameshot \
+            "$@"
+
+        return $?
+    fi
+
+    notify-send \
+        "ThinkVantage" \
+        "Flameshot is not installed."
+
+    return 127
+}
+
+
+# ============================================================
+# screenshots
+# ============================================================
+
+capture_display() {
+    # Let rofi disappear completely before capturing.
+    sleep 0.15
+
+    if flameshot_run \
+        screen \
+        --path "$SCREENSHOT_DIR"
+    then
+        notify-send \
+            "Screenshot" \
+            "Display screenshot saved to ~/Pictures/Screenshots."
+    else
+        notify-send \
+            "Screenshot" \
+            "Display screenshot failed."
+    fi
+
+    exit 0
+}
+
+
+capture_all_displays() {
+    sleep 0.15
+
+    if flameshot_run \
+        full \
+        --path "$SCREENSHOT_DIR"
+    then
+        notify-send \
+            "Screenshot" \
+            "All-displays screenshot saved to ~/Pictures/Screenshots."
+    else
+        notify-send \
+            "Screenshot" \
+            "All-displays screenshot failed."
+    fi
+
+    exit 0
+}
+
+
+capture_active_window() {
+    local id="$ORIGINAL_WINDOW"
+
+    if [[ -z "$id" ]] ||
+       ! xwininfo -id "$id" >/dev/null 2>&1
+    then
+        notify-send \
+            "Screenshot" \
+            "Could not find the window that was active before ThinkVantage opened."
+
+        exit 1
+    fi
+
+
+    # -----------------------------
+    # get client window geometry
+    # -----------------------------
+
+    local info
+    local x
+    local y
+    local width
+    local height
+
+    info="$(xwininfo -id "$id")"
+
+    x="$(
+        awk \
+            '/Absolute upper-left X:/ {print $4}' \
+            <<< "$info"
+    )"
+
+    y="$(
+        awk \
+            '/Absolute upper-left Y:/ {print $4}' \
+            <<< "$info"
+    )"
+
+    width="$(
+        awk \
+            '/Width:/ {print $2; exit}' \
+            <<< "$info"
+    )"
+
+    height="$(
+        awk \
+            '/Height:/ {print $2; exit}' \
+            <<< "$info"
+    )"
+
+
+    # -----------------------------
+    # add Cinnamon/Muffin borders
+    # and titlebar
+    # -----------------------------
+
+    local extents
+
+    extents="$(
+        xprop \
+            -id "$id" \
+            _NET_FRAME_EXTENTS \
+            2>/dev/null |
+        sed -n 's/.*= //p' |
+        tr -d ','
+    )"
+
+
+    if [[ -n "$extents" ]]; then
+        local left
+        local right
+        local top
+        local bottom
+
+        read -r \
+            left \
+            right \
+            top \
+            bottom \
+            <<< "$extents"
+
+        x=$((x - left))
+        y=$((y - top))
+
+        width=$((width + left + right))
+        height=$((height + top + bottom))
+    fi
+
+
+    local region="${width}x${height}+${x}+${y}"
+
+
+    # Put the original window back in front.
+    # This also makes sure Flameshot doesn't accidentally
+    # immortalise rofi instead.
+    xdotool \
+        windowactivate \
+        --sync \
+        "$id" \
+        >/dev/null 2>&1 ||
+        true
+
+
+    sleep 0.15
+
+
+    # Use the entire desktop as Flameshot's source,
+    # then crop to our calculated window rectangle.
+    if flameshot_run \
+        full \
+        --region "$region" \
+        --path "$SCREENSHOT_DIR"
+    then
+        notify-send \
+            "Screenshot" \
+            "Active-window screenshot saved to ~/Pictures/Screenshots."
+    else
+        notify-send \
+            "Screenshot" \
+            "Active-window screenshot failed."
+    fi
+
+    exit 0
+}
+
+
+# ============================================================
+# brightness
+# ============================================================
+
+set_brightness() {
+    local value="$1"
+
+    if ! command -v brightnessctl >/dev/null 2>&1; then
+        missing "brightnessctl"
+        exit 1
+    fi
+
+
+    if [[ -z "$BACKLIGHT_DEVICE" ]]; then
+        notify-send \
+            "Brightness" \
+            "No backlight device was found."
+
+        exit 1
+    fi
+
+
+    local output
+
+    if output="$(
+        brightnessctl \
+            --device="$BACKLIGHT_DEVICE" \
+            set "$value" \
+            2>&1
+    )"
+    then
+
+        local current
+        local maximum
+        local percent
+
+        current="$(
+            brightnessctl \
+                --device="$BACKLIGHT_DEVICE" \
+                get \
+                2>/dev/null
+        )"
+
+        maximum="$(
+            brightnessctl \
+                --device="$BACKLIGHT_DEVICE" \
+                max \
+                2>/dev/null
+        )"
+
+
+        if [[ "$current" =~ ^[0-9]+$ ]] &&
+           [[ "$maximum" =~ ^[0-9]+$ ]] &&
+           [[ "$maximum" -gt 0 ]]
+        then
+            percent=$((current * 100 / maximum))
+
+            notify-send \
+                "Brightness" \
+                "Brightness: ${percent}%"
+        else
+            notify-send \
+                "Brightness" \
+                "Brightness changed."
+        fi
+
+    else
+
+        notify-send \
+            "Brightness failed" \
+            "$output"
+
+    fi
+
+    exit 0
+}
+
+
+# ============================================================
+# special launchers
+# ============================================================
+
+launch_easyeffects() {
+
+    # Native package
+    if command -v easyeffects >/dev/null 2>&1; then
+        run_bg easyeffects
+    fi
+
+
+    # Flatpak
+    if command -v flatpak >/dev/null 2>&1 &&
+       flatpak info \
+           com.github.wwmm.easyeffects \
+           >/dev/null 2>&1
+    then
+        run_flatpak \
+            com.github.wwmm.easyeffects
+    fi
+
+
+    notify-send \
+        "ThinkVantage" \
+        "EasyEffects is not installed."
+
+    exit 1
+}
+
+
+launch_fsearch() {
+
+    # Native / PPA
+    if command -v fsearch >/dev/null 2>&1; then
+        run_bg fsearch
+    fi
+
+
+    # Flatpak
+    if command -v flatpak >/dev/null 2>&1 &&
+       flatpak info \
+           io.github.cboxdoerfer.FSearch \
+           >/dev/null 2>&1
+    then
+        run_flatpak \
+            io.github.cboxdoerfer.FSearch
+    fi
+
+
+    notify-send \
+        "ThinkVantage" \
+        "FSearch is not installed."
+
+    exit 1
+}
+
+
+# ============================================================
+# clipboard
+# ============================================================
+
+clipboard_history() {
+
+    if ! command -v copyq >/dev/null 2>&1; then
+        missing "copyq"
+        exit 1
+    fi
+
+
+    # Starts CopyQ if it isn't already running,
+    # then opens its main window.
+    nohup copyq \
+        --start-server \
+        show \
+        >/dev/null 2>&1 &
+
+    disown
+    exit 0
+}
+
+
+display_clipboard() {
+
+    if ! command -v xclip >/dev/null 2>&1; then
+        missing "xclip"
+        exit 1
+    fi
+
+
+    local file="$CACHE_DIR/current-clipboard.txt"
+
+
+    if xclip \
+        -selection clipboard \
+        -o \
+        > "$file" \
+        2>/dev/null
+    then
+        run_bg \
+            xed \
+            "$file"
+    else
+        notify-send \
+            "Clipboard" \
+            "Could not read text from the clipboard."
+
+        exit 1
+    fi
+}
+
+
+# ============================================================
+# SYSTEM
+# ============================================================
+
+menu_system() {
+
+    local choice
+
+    choice="$(
+        menu \
+            "System" \
+            "Mission Center" \
+            "btop" \
+            "CPU-X" \
+            "Hardware Information" \
+            "Disk Usage" \
+            "Disks" \
+            "System Logs" \
+            "Update Manager" \
+            "Sensors" \
+            "Failed Services" \
+            "Back"
+    )"
+
+
+    case "$choice" in
+
+        "Mission Center")
+            run_flatpak \
+                io.missioncenter.MissionCenter
+            ;;
+
+
+        "btop")
+            terminal_run \
+                "120x35" \
+                "btop" \
+                "btop"
+            ;;
+
+
+        "CPU-X")
+            run_bg flatpak run io.github.thetumultuousunicornofdarkness.cpu-x
+            ;;
+
+
+        "Hardware Information")
+            run_bg hardinfo
+            ;;
+
+
+        "Disk Usage")
+            run_bg baobab
+            ;;
+
+
+        "Disks")
+            run_bg gnome-disks
+            ;;
+
+
+        "System Logs")
+            run_bg gnome-logs
+            ;;
+
+
+        "Update Manager")
+            run_bg mintupdate
+            ;;
+
+
+        "Sensors")
+            terminal_run \
+                "100x30" \
+                "Sensors" \
+                "watch -n 1 sensors"
+            ;;
+
+
+        "Failed Services")
+            terminal_run \
+                "120x30" \
+                "Failed Services" \
+                "systemctl --failed; echo; systemctl --user --failed"
+            ;;
+
+
+        "Back")
+            return
+            ;;
+
+
+        *)
+            exit 0
+            ;;
+
+    esac
+}
+
+
+# ============================================================
+# NETWORK
+# ============================================================
+
+menu_network() {
+
+    local choice
+
+    choice="$(
+        menu \
+            "Network" \
+            "Network Connections" \
+            "Wi-Fi Monitor" \
+            "Network Manager TUI" \
+            "Bluetooth" \
+            "Firewall" \
+            "Network Information" \
+            "Wi-Fi Information" \
+            "Ping Cloudflare" \
+            "Ping Google" \
+            "DNS Lookup" \
+            "Listening Ports" \
+            "Back"
+    )"
+
+
+    case "$choice" in
+
+        "Network Connections")
+            run_bg \
+                nm-connection-editor
+            ;;
+
+
+        "Wi-Fi Monitor")
+            run_bg \
+                gnome-terminal \
+                --geometry=116x27 \
+                -- \
+                wavemon
+            ;;
+
+
+        "Network Manager TUI")
+            terminal_run \
+                "100x30" \
+                "Network Manager" \
+                "nmtui"
+            ;;
+
+
+        "Bluetooth")
+            run_bg \
+                blueman-manager
+            ;;
+
+
+        "Firewall")
+            run_bg \
+                gufw
+            ;;
+
+
+        "Network Information")
+            terminal_run \
+                "120x35" \
+                "Network Information" \
+                "echo '=== ADDRESSES ==='; ip -brief address; echo; echo '=== ROUTES ==='; ip route; echo; echo '=== DNS ==='; resolvectl status 2>/dev/null || cat /etc/resolv.conf"
+            ;;
+
+
+        "Wi-Fi Information")
+            terminal_run \
+                "120x30" \
+                "Wi-Fi Information" \
+                "iw dev 2>/dev/null; echo; nmcli device wifi list"
+            ;;
+
+
+        "Ping Cloudflare")
+            terminal_run \
+                "90x25" \
+                "Ping Cloudflare" \
+                "ping 1.1.1.1"
+            ;;
+
+
+        "Ping Google")
+            terminal_run \
+                "90x25" \
+                "Ping Google" \
+                "ping 8.8.8.8"
+            ;;
+
+
+        "DNS Lookup")
+
+            local host
+
+            host="$(
+                rofi \
+                    -dmenu \
+                    -i \
+                    -p "Hostname"
+            )"
+
+            [[ -z "$host" ]] &&
+                exit 0
+
+            terminal_run \
+                "100x25" \
+                "DNS Lookup" \
+                "dig $(printf '%q' "$host")"
+            ;;
+
+
+        "Listening Ports")
+            terminal_run \
+                "120x30" \
+                "Listening Ports" \
+                "sudo ss -tulpn"
+            ;;
+
+
+        "Back")
+            return
+            ;;
+
+
+        *)
+            exit 0
+            ;;
+
+    esac
+}
+
+
+# ============================================================
+# AUDIO
+# ============================================================
+
+menu_audio() {
+
+    local choice
+
+    choice="$(
+        menu \
+            "Audio" \
+            "Volume Control" \
+            "EasyEffects" \
+            "Mute / Unmute" \
+            "Volume +5%" \
+            "Volume -5%" \
+            "Microphone Mute / Unmute" \
+            "Audio Devices" \
+            "Back"
+    )"
+
+
+    case "$choice" in
+
+        "Volume Control")
+            run_bg \
+                pavucontrol
+            ;;
+
+
+        "EasyEffects")
+            launch_easyeffects
+            ;;
+
+
+        "Mute / Unmute")
+            pactl \
+                set-sink-mute \
+                @DEFAULT_SINK@ \
+                toggle
+
+            exit 0
+            ;;
+
+
+        "Volume +5%")
+            pactl \
+                set-sink-volume \
+                @DEFAULT_SINK@ \
+                +5%
+
+            exit 0
+            ;;
+
+
+        "Volume -5%")
+            pactl \
+                set-sink-volume \
+                @DEFAULT_SINK@ \
+                -5%
+
+            exit 0
+            ;;
+
+
+        "Microphone Mute / Unmute")
+            pactl \
+                set-source-mute \
+                @DEFAULT_SOURCE@ \
+                toggle
+
+            exit 0
+            ;;
+
+
+        "Audio Devices")
+            terminal_run \
+                "120x30" \
+                "Audio Devices" \
+                "pactl list short sinks; echo; pactl list short sources"
+            ;;
+
+
+        "Back")
+            return
+            ;;
+
+
+        *)
+            exit 0
+            ;;
+
+    esac
+}
+
+
+# ============================================================
+# DISPLAY
+# ============================================================
+
+menu_display() {
+
+    local choice
+
+    choice="$(
+        menu \
+            "Display" \
+            "Display Settings" \
+            "Colour Profiles" \
+            "Night Light Settings" \
+            "Brightness +10%" \
+            "Brightness -10%" \
+            "Brightness 100%" \
+            "Brightness 50%" \
+            "Brightness 25%" \
+            "Back"
+    )"
+
+
+    case "$choice" in
+
+        "Display Settings")
+            run_bg \
+                cinnamon-settings \
+                display
+            ;;
+
+
+        "Colour Profiles")
+            run_bg \
+                cinnamon-settings \
+                color
+            ;;
+
+
+        "Night Light Settings")
+            run_bg \
+                cinnamon-settings \
+                nightlight
+            ;;
+
+
+        "Brightness +10%")
+            set_brightness "+10%"
+            ;;
+
+
+        "Brightness -10%")
+            set_brightness "10%-"
+            ;;
+
+
+        "Brightness 100%")
+            set_brightness "100%"
+            ;;
+
+
+        "Brightness 50%")
+            set_brightness "50%"
+            ;;
+
+
+        "Brightness 25%")
+            set_brightness "25%"
+            ;;
+
+
+        "Back")
+            return
+            ;;
+
+
+        *)
+            exit 0
+            ;;
+
+    esac
+}
+
+
+# ============================================================
+# SCREENSHOTS
+# ============================================================
+
+menu_screenshots() {
+
+    local choice
+
+    choice="$(
+        menu \
+            "Screenshots" \
+            "Select Area" \
+            "Whole Display" \
+            "All Displays" \
+            "Active Window" \
+            "Select Area → Clipboard" \
+            "Back"
+    )"
+
+
+    case "$choice" in
+
+        "Select Area")
+
+            flameshot_run \
+                gui \
+                --path "$SCREENSHOT_DIR"
+
+            exit 0
+            ;;
+
+
+        "Whole Display")
+            capture_display
+            ;;
+
+
+        "All Displays")
+            capture_all_displays
+            ;;
+
+
+        "Active Window")
+            capture_active_window
+            ;;
+
+
+        "Select Area → Clipboard")
+
+            flameshot_run \
+                gui \
+                --clipboard \
+                --path "$SCREENSHOT_DIR"
+
+            exit 0
+            ;;
+
+
+        "Back")
+            return
+            ;;
+
+
+        *)
+            exit 0
+            ;;
+
+    esac
+}
+
+
+# ============================================================
+# FILES
+# ============================================================
+
+menu_files() {
+
+    local choice
+
+    choice="$(
+        menu \
+            "Files" \
+            "Home" \
+            "Downloads" \
+            "Documents" \
+            "File Search" \
+            "Disk Usage" \
+            "Disks" \
+            "Root Filesystem" \
+            "Trash" \
+            "Back"
+    )"
+
+
+    case "$choice" in
+
+        "Home")
+            run_bg \
+                nemo \
+                "$HOME"
+            ;;
+
+
+        "Downloads")
+            run_bg \
+                nemo \
+                "$HOME/Downloads"
+            ;;
+
+
+        "Documents")
+            run_bg \
+                nemo \
+                "$HOME/Documents"
+            ;;
+
+
+        "File Search")
+            launch_fsearch
+            ;;
+
+
+        "Disk Usage")
+            run_bg \
+                baobab
+            ;;
+
+
+        "Disks")
+            run_bg \
+                gnome-disks
+            ;;
+
+
+        "Root Filesystem")
+            run_bg \
+                nemo \
+                "admin:///"
+            ;;
+
+
+        "Trash")
+            run_bg \
+                nemo \
+                "trash:///"
+            ;;
+
+
+        "Back")
+            return
+            ;;
+
+
+        *)
+            exit 0
+            ;;
+
+    esac
+}
+
+
+# ============================================================
+# CLIPBOARD
+# ============================================================
+
+menu_clipboard() {
+
+    local choice
+
+    choice="$(
+        menu \
+            "Clipboard" \
+            "Clipboard History" \
+            "Clear Clipboard" \
+            "Display Current Clipboard" \
+            "Back"
+    )"
+
+
+    case "$choice" in
+
+        "Clipboard History")
+            clipboard_history
+            ;;
+
+
+        "Clear Clipboard")
+
+            printf '' |
+                xclip \
+                    -selection clipboard
+
+            notify-send \
+                "Clipboard" \
+                "Clipboard cleared."
+
+            exit 0
+            ;;
+
+
+        "Display Current Clipboard")
+            display_clipboard
+            ;;
+
+
+        "Back")
+            return
+            ;;
+
+
+        *)
+            exit 0
+            ;;
+
+    esac
+}
+
+
+# ============================================================
+# SECURITY
+# ============================================================
+
+menu_security() {
+
+    local choice
+
+    choice="$(
+        menu \
+            "Security" \
+            "Wireshark" \
+            "Firewall" \
+            "Timeshift" \
+            "Flatpak Permissions" \
+            "Failed Login Attempts" \
+            "Open Ports" \
+            "Lock Screen" \
+            "Back"
+    )"
+
+
+    case "$choice" in
+
+        "Wireshark")
+            run_bg \
+                wireshark
+            ;;
+
+
+        "Firewall")
+            run_bg \
+                gufw
+            ;;
+
+
+        "Timeshift")
+            run_bg \
+                timeshift-gtk
+            ;;
+
+
+        "Flatpak Permissions")
+            run_flatpak \
+                com.github.tchx84.Flatseal
+            ;;
+
+
+        "Failed Login Attempts")
+            terminal_run \
+                "120x30" \
+                "Failed Login Attempts" \
+                "sudo journalctl -u ssh --since today | grep -iE 'failed|failure|invalid' || true"
+            ;;
+
+
+        "Open Ports")
+            terminal_run \
+                "120x30" \
+                "Open Ports" \
+                "sudo ss -tulpn"
+            ;;
+
+
+        "Lock Screen")
+
+            cinnamon-screensaver-command \
+                --lock
+
+            exit 0
+            ;;
+
+
+        "Back")
+            return
+            ;;
+
+
+        *)
+            exit 0
+            ;;
+
+    esac
+}
+
+
+# ============================================================
+# SHARING
+# ============================================================
+
+menu_sharing() {
+
+    local choice
+
+    choice="$(
+        menu \
+            "Sharing" \
+            "LocalSend" \
+            "Warpinator" \
+            "Back"
+    )"
+
+
+    case "$choice" in
+
+        "LocalSend")
+            run_flatpak \
+                org.localsend.localsend_app
+            ;;
+
+
+        "Warpinator")
+            run_bg \
+                warpinator
+            ;;
+
+
+        "Back")
+            return
+            ;;
+
+
+        *)
+            exit 0
+            ;;
+
+    esac
+}
+
+
+# ============================================================
+# TOOLS
+# ============================================================
+
+menu_tools() {
+
+    local choice
+
+    choice="$(
+        menu \
+            "Tools" \
+            "Terminal" \
+            "Calculator" \
+            "Colour Picker" \
+            "Character Map" \
+            "Kill Window" \
+            "Process Search" \
+            "Environment Information" \
+            "Mounted Drives" \
+            "Journal" \
+            "Back"
+    )"
+
+
+    case "$choice" in
+
+        "Terminal")
+            run_bg \
+                gnome-terminal
+            ;;
+
+
+        "Calculator")
+            run_bg \
+                qalculate-gtk
+            ;;
+
+
+        "Colour Picker")
+            run_bg \
+                gpick
+            ;;
+
+
+        "Character Map")
+            run_bg \
+                gucharmap
+            ;;
+
+
+        "Kill Window")
+            xkill
+            exit 0
+            ;;
+
+
+        "Process Search")
+
+            local process
+            local pid
+
+            process="$(
+                ps \
+                    -eo pid,comm,%cpu,%mem \
+                    --sort=-%cpu |
+                rofi \
+                    -dmenu \
+                    -i \
+                    -p "Processes"
+            )"
+
+            pid="$(
+                awk \
+                    '{print $1}' \
+                    <<< "$process"
+            )"
+
+            if [[ "$pid" =~ ^[0-9]+$ ]]; then
+                kill "$pid"
+            fi
+
+            exit 0
+            ;;
+
+
+        "Environment Information")
+            terminal_run \
+                "120x35" \
+                "System Information" \
+                "uname -a; echo; lscpu; echo; free -h"
+            ;;
+
+
+        "Mounted Drives")
+            terminal_run \
+                "120x30" \
+                "Mounted Drives" \
+                "lsblk -o NAME,SIZE,FSTYPE,FSUSE%,MOUNTPOINTS,MODEL"
+            ;;
+
+
+        "Journal")
+            terminal_run \
+                "140x40" \
+                "Journal" \
+                "journalctl -f"
+            ;;
+
+
+        "Back")
+            return
+            ;;
+
+
+        *)
+            exit 0
+            ;;
+
+    esac
+}
+
+
+# ============================================================
+# POWER
+# ============================================================
+
+menu_power() {
+
+    local choice
+
+    choice="$(
+        menu \
+            "Power" \
+            "Lock" \
+            "Suspend" \
+            "Hibernate" \
+            "Log Out" \
+            "Restart Cinnamon" \
+            "Reboot" \
+            "Shut Down" \
+            "Back"
+    )"
+
+
+    case "$choice" in
+
+        "Lock")
+
+            cinnamon-screensaver-command \
+                --lock
+
+            exit 0
+            ;;
+
+
+        "Suspend")
+
+            systemctl \
+                suspend
+
+            exit 0
+            ;;
+
+
+        "Hibernate")
+
+            confirm "Hibernate?" &&
+                systemctl hibernate
+
+            exit 0
+            ;;
+
+
+        "Log Out")
+
+            confirm "Log out?" &&
+                cinnamon-session-quit \
+                    --logout \
+                    --no-prompt
+
+            exit 0
+            ;;
+
+
+        "Restart Cinnamon")
+
+            nohup cinnamon \
+                --replace \
+                >/dev/null 2>&1 &
+
+            disown
+            exit 0
+            ;;
+
+
+        "Reboot")
+
+            confirm "Reboot?" &&
+                systemctl reboot
+
+            exit 0
+            ;;
+
+
+        "Shut Down")
+
+            confirm "Shut down?" &&
+                systemctl poweroff
+
+            exit 0
+            ;;
+
+
+        "Back")
+            return
+            ;;
+
+
+        *)
+            exit 0
+            ;;
+
+    esac
+}
+
+
+# ============================================================
+# MAIN MENU
+# ============================================================
+
+while true; do
+
+    choice="$(
+        menu \
+            "ThinkVantage" \
+            "System" \
+            "Network" \
+            "Audio" \
+            "Display" \
+            "Screenshots" \
+            "Files" \
+            "Clipboard" \
+            "Security" \
+            "Sharing" \
+            "Tools" \
+            "Power"
+    )"
+
+
+    case "$choice" in
+
+        "System")
+            menu_system
+            ;;
+
+        "Network")
+            menu_network
+            ;;
+
+        "Audio")
+            menu_audio
+            ;;
+
+        "Display")
+            menu_display
+            ;;
+
+        "Screenshots")
+            menu_screenshots
+            ;;
+
+        "Files")
+            menu_files
+            ;;
+
+        "Clipboard")
+            menu_clipboard
+            ;;
+
+        "Security")
+            menu_security
+            ;;
+
+        "Sharing")
+            menu_sharing
+            ;;
+
+        "Tools")
+            menu_tools
+            ;;
+
+        "Power")
+            menu_power
+            ;;
+
+        *)
+            exit 0
+            ;;
+
+    esac
+
+done
