@@ -22,6 +22,7 @@ sudo apt install rofi libnotify-bin gnome-terminal xdotool x11-utils brightnessc
 - `xdotool` — active-window detection and activation
 - `x11-utils` — provides `xwininfo`, `xprop` and `xkill`
 - `brightnessctl` — display brightness control
+- `xcalib` — calibrate X display colours
 - `copyq` — clipboard history
 - `xclip` — reading and clearing the X11 clipboard
 - `hardinfo` — hardware information

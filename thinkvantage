@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
 
 # ============================================================
-# ThinkVantage menu
-# by fridge | last update: 03/09/2026
-#
-# Copyright (C) 2026 Ashton Prideaux
-# This program comes with ABSOLUTELY NO WARRANTY; for details see LICENSE.
-# This is free software, and you are welcome to redistribute it under 
-# certain conditions; see LICENSE for details.
+# ThinkVantage Control Centre
 # ============================================================
 
 SCREENSHOT_DIR="$HOME/Pictures/Screenshots"
@@ -856,6 +850,7 @@ menu_display() {
             "Display Settings" \
             "Colour Profiles" \
             "Night Light Settings" \
+            "Toggle Red Filter" \
             "Brightness +10%" \
             "Brightness -10%" \
             "Brightness 100%" \
@@ -887,6 +882,11 @@ menu_display() {
                 nightlight
             ;;
 
+
+        "Toggle Red Filter")
+            run_bg \
+                bash -c 'f=/tmp/xcalib-toggle-$USER; if [ -e "$f" ]; then xcalib -clear && rm -f "$f"; else xcalib -green .1 0 1 -alter && xcalib -blue .1 0 1 -alter && touch "$f"; fi'
+            ;;
 
         "Brightness +10%")
             set_brightness "+10%"
